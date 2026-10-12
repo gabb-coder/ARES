@@ -57,7 +57,7 @@ export function toSpeech(text: string, maxChars = 320): string {
   return out;
 }
 
-/** System prompt for the optional LLM fallback. Frozen per process so it caches. */
+/** System prompt for the optional LLM agent. Frozen per process so it caches. */
 export function systemPrompt(hooks: HookInfo[]): string {
   const commands = hooks
     .map((h) => `- ${h.description} (e.g. "${h.examples[0] ?? h.name}")`)
@@ -71,10 +71,15 @@ How to answer:
 - Lead with the answer. One to three short sentences.
 - No preambles, filler, pleasantries, or restating the question.
 - Plain spoken prose only: no markdown, lists, code, URLs or emoji.
+- When summarizing an email thread, document or search results, give the gist in two or three sentences.
 - If you are unsure, say so in one sentence rather than guessing.
 
-You are reached only when no built-in command matched the user's words. You cannot take actions on the computer yourself. If the user wants an action, point them to the matching command phrase below, or say briefly that no command covers it.
+Tools:
+- You have tools for the user's local files and for any apps they have connected (such as email, calendar, documents, tickets and chat). Use them whenever a request involves the user's own data or asks you to do something; don't answer those from memory.
+- Each user message begins with the current local date and time in brackets. Use it to resolve words like "today" or "next Friday".
+- Actions that send, create, change or delete something are shown to the user to confirm before they run, so call the tool directly rather than asking permission in text. When the user asks for a draft, create a draft instead of sending.
+- If no tool fits the request, say so in one sentence.
 
-Built-in commands:
+Built-in voice commands (these are handled before a request reaches you):
 ${commands}`;
 }

@@ -21,6 +21,11 @@ const LOCATIONS: Record<string, string> = {
 
 export class SandboxError extends Error {}
 
+const SEARCH_LIMIT = 20;
+const SEARCH_MAX_DEPTH = 6;
+const SEARCH_MAX_VISITS = 20_000;
+const SEARCH_SKIP = new Set(['node_modules', 'Library', 'AppData', '$Recycle.Bin', 'proc', '__pycache__']);
+
 /**
  * Confines filesystem hooks to a single root directory (ARES_FS_ROOT, default:
  * the user's home). Every path is resolved, symlinks included, and rejected if
@@ -57,6 +62,36 @@ export class FsSandbox {
     const fixed = await this.#fixCase(absolute);
     await this.#assertRealInside(fixed);
     return fixed;
+  }
+
+  /**
+   * Breadth-first, case-insensitive name search under `start`, with depth,
+   * visit and result caps so it stays fast on large home folders.
+   */
+  async search(start: string, needle: string, limit = SEARCH_LIMIT): Promise<string[]> {
+    const wanted = needle.toLowerCase();
+    const hits: string[] = [];
+    let queue: Array<{ dir: string; depth: number }> = [{ dir: start, depth: 0 }];
+    let visits = 0;
+
+    while (queue.length && hits.length < limit && visits < SEARCH_MAX_VISITS) {
+      const next: typeof queue = [];
+      for (const { dir, depth } of queue) {
+        const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+        for (const entry of entries) {
+          visits++;
+          if (entry.name.startsWith('.') || SEARCH_SKIP.has(entry.name)) continue;
+          const full = path.join(dir, entry.name);
+          if (entry.name.toLowerCase().includes(wanted)) {
+            hits.push(full);
+            if (hits.length >= limit) return hits;
+          }
+          if (entry.isDirectory() && depth < SEARCH_MAX_DEPTH) next.push({ dir: full, depth: depth + 1 });
+        }
+      }
+      queue = next;
+    }
+    return hits;
   }
 
   /** Path shown to the user: relative to the root, prefixed with "~". */

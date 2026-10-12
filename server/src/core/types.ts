@@ -1,6 +1,9 @@
 import type { AppConfig } from '../config.js';
 import type { FsSandbox } from '../services/fsSandbox.js';
+import type { AppDirectory } from '../services/appDirectory.js';
 import type { Launcher } from '../services/launcher.js';
+import type { Scheduler } from '../services/scheduler.js';
+import type { SystemControl } from '../services/system.js';
 
 /** Optional structured output rendered on the dashboard next to the spoken reply. */
 export interface HookCard {
@@ -40,6 +43,12 @@ export interface HookContext {
   fs: FsSandbox;
   /** The only sanctioned way to open URLs, files and apps. */
   launcher: Launcher;
+  /** OS controls: volume, media, apps, power, appearance, clipboard. */
+  system: SystemControl;
+  /** Apps addressable by voice (aliases, plus installed apps on macOS). */
+  apps: AppDirectory;
+  /** Timers and reminders. */
+  scheduler: Scheduler;
   /** Metadata for every registered hook (used by the help hook). */
   hooks: () => HookInfo[];
 }

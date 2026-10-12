@@ -6,3 +6,6 @@ dist/
 .DS_Store
 coverage/
 *.tsbuildinfo
+
+# ARES integrations hold personal config; copy integrations.example.json
+server/integrations.json

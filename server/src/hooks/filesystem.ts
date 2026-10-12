@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { localStamp } from '../core/format.js';
 import { patterns, spokenToFilename } from '../core/intent.js';
 import { defineHook, type HookContext } from '../core/types.js';
 
@@ -154,8 +155,7 @@ export const noteHook = defineHook({
   match: patterns(/^(?:take a note|make a note|note|jot down|remember)(?: that)?[:,]?\s+(?<text>.+)$/i),
   run: async ({ text }, ctx) => {
     const target = await ctx.fs.resolve('ARES-notes.md');
-    const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
-    await fs.appendFile(target, `- ${stamp} — ${text}\n`);
+    await fs.appendFile(target, `- ${localStamp().slice(0, 16)} — ${text}\n`);
     return { speech: 'Noted.', card: { title: ctx.fs.display(target), items: [text ?? ''] } };
   },
 });
@@ -177,7 +177,7 @@ export const searchHook = defineHook({
   run: async ({ query, location }, ctx) => {
     const needle = spokenToFilename(query ?? '').toLowerCase();
     const start = await ctx.fs.location(location);
-    const hits = await findByName(start, needle);
+    const hits = await ctx.fs.search(start, needle, SEARCH_LIMIT);
     const where = ctx.fs.display(start);
 
     if (hits.length === 0) return { speech: `No matches for ${needle} in ${spokenPath(where)}.` };
@@ -198,7 +198,8 @@ export const openPathHook = defineHook({
   priority: 20,
   match: patterns(
     new RegExp(String.raw`^(?:open|reveal)(?: up)?(?: my| the)? (?<location>.+?) (?:folder|directory)(?: in (?:the )?(?:file manager|finder|explorer))?$`, 'i'),
-    /^open(?: my| the)? (?<location>desktop|documents|downloads|home folder|pictures|music|videos)$/i,
+    // Bare "open music" / "open photos" are apps on macOS; only unambiguous folders here.
+    /^open(?: my| the)? (?<location>desktop|documents|downloads|home folder)$/i,
     new RegExp(String.raw`^open (?:the )?file (?<file>.+?)` + IN_LOCATION + '$', 'i'),
   ),
   run: async ({ location, file }, ctx) => {
@@ -214,35 +215,6 @@ export const openPathHook = defineHook({
 // --- helpers ---------------------------------------------------------------
 
 const SEARCH_LIMIT = 20;
-const SEARCH_MAX_DEPTH = 6;
-const SEARCH_MAX_VISITS = 20_000;
-const SEARCH_SKIP = new Set(['node_modules', 'Library', 'AppData', '$Recycle.Bin', 'proc', '__pycache__']);
-
-/** Breadth-first name search with depth, visit and result caps so it stays fast. */
-async function findByName(start: string, needle: string): Promise<string[]> {
-  const hits: string[] = [];
-  let queue: Array<{ dir: string; depth: number }> = [{ dir: start, depth: 0 }];
-  let visits = 0;
-
-  while (queue.length && hits.length < SEARCH_LIMIT && visits < SEARCH_MAX_VISITS) {
-    const next: typeof queue = [];
-    for (const { dir, depth } of queue) {
-      const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
-      for (const entry of entries) {
-        visits++;
-        if (entry.name.startsWith('.') || SEARCH_SKIP.has(entry.name)) continue;
-        const full = path.join(dir, entry.name);
-        if (entry.name.toLowerCase().includes(needle)) {
-          hits.push(full);
-          if (hits.length >= SEARCH_LIMIT) return hits;
-        }
-        if (entry.isDirectory() && depth < SEARCH_MAX_DEPTH) next.push({ dir: full, depth: depth + 1 });
-      }
-    }
-    queue = next;
-  }
-  return hits;
-}
 
 async function readDir(dir: string, ctx: HookContext) {
   try {

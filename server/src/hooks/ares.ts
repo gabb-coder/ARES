@@ -56,9 +56,8 @@ export const helpHook = defineHook({
   ),
   run: (_params, ctx) => {
     const hooks = ctx.hooks();
-    const categories = [...new Set(hooks.map((h) => h.category))].filter((c) => c !== 'ARES');
     return {
-      speech: `I handle ${listify(categories.map((c) => c.toLowerCase()))}. Commands are on screen.`,
+      speech: 'Timers, reminders, weather, math, music, apps, files and the web. The full list is on screen.',
       card: {
         title: 'Commands',
         items: hooks.filter((h) => h.examples[0]).map((h) => `${h.examples[0]} — ${h.description}`),
@@ -66,10 +65,5 @@ export const helpHook = defineHook({
     };
   },
 });
-
-function listify(items: string[]): string {
-  if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
-}
 
 export const aresHooks = [identityHook, greetingHook, wellbeingHook, thanksHook, helpHook];

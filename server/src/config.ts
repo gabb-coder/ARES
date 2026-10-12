@@ -22,6 +22,10 @@ export interface AppConfig {
   fsRoot: string;
   pluginDir: string;
   clientDist: string;
+  /** Where ARES keeps its own state: reminders, integration tokens. */
+  dataDir: string;
+  /** MCP integrations file (Claude Desktop-style "mcpServers"). */
+  integrationsFile: string;
   /** Log system actions (open URL, launch app) instead of performing them. */
   dryRun: boolean;
   tts: {
@@ -38,11 +42,20 @@ export interface AppConfig {
   };
   brain: {
     provider: BrainProvider;
-    ollama: { url: string; model: string };
+    ollama: { url: string; model: string; think: boolean | null };
     anthropic: { model: string };
     historyTurns: number;
+    /** Upper bound on tools offered to the model per request. */
+    maxTools: number;
+    /** Ollama context window; tool definitions need room. */
+    ollamaContext: number;
   };
   apps: Record<string, string[]>;
+  weather: {
+    /** Default place for "what's the weather": a city name or "lat,lon". */
+    location: string;
+    units: 'celsius' | 'fahrenheit';
+  };
 }
 
 function env(name: string, fallback = ''): string {
@@ -112,6 +125,13 @@ function parseApps(): Record<string, string[]> {
   return apps;
 }
 
+/** Fahrenheit where it's customary (US and a few others), Celsius elsewhere. */
+function defaultTemperatureUnit(): 'celsius' | 'fahrenheit' {
+  const locale = Intl.DateTimeFormat().resolvedOptions().locale;
+  const region = new Intl.Locale(locale).maximize().region ?? '';
+  return ['US', 'LR', 'MM', 'BS', 'BZ', 'KY', 'PW', 'FM', 'MH'].includes(region) ? 'fahrenheit' : 'celsius';
+}
+
 export function loadConfig(): AppConfig {
   const port = Number(env('ARES_PORT', '3001'));
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
@@ -127,6 +147,8 @@ export function loadConfig(): AppConfig {
       .filter(Boolean),
     fsRoot: path.resolve(expandHome(env('ARES_FS_ROOT', os.homedir()))),
     pluginDir: path.resolve(SERVER_ROOT, env('ARES_PLUGIN_DIR', 'plugins')),
+    dataDir: path.resolve(expandHome(env('ARES_DATA_DIR', '~/.ares'))),
+    integrationsFile: path.resolve(SERVER_ROOT, expandHome(env('ARES_INTEGRATIONS', 'integrations.json'))),
     clientDist: path.resolve(SERVER_ROOT, '..', 'client', 'dist'),
     dryRun: ['1', 'true', 'yes'].includes(env('ARES_DRY_RUN').toLowerCase()),
     tts: {
@@ -153,11 +175,19 @@ export function loadConfig(): AppConfig {
       provider: oneOf('ARES_BRAIN', ['none', 'ollama', 'anthropic'] as const, 'none'),
       ollama: {
         url: env('OLLAMA_URL', 'http://127.0.0.1:11434').replace(/\/+$/, ''),
-        model: env('OLLAMA_MODEL', 'llama3.2'),
+        model: env('OLLAMA_MODEL', 'qwen3:8b'),
+        // Unset: the model's default. "false" skips reasoning for faster spoken replies.
+        think: env('OLLAMA_THINK') ? env('OLLAMA_THINK').toLowerCase() === 'true' : null,
       },
       anthropic: { model: env('ANTHROPIC_MODEL', 'claude-opus-5-5') },
       historyTurns: Number(env('ARES_BRAIN_HISTORY', '6')),
+      maxTools: Number(env('ARES_AGENT_MAX_TOOLS', '40')),
+      ollamaContext: Number(env('OLLAMA_NUM_CTX', '16384')),
     },
     apps: parseApps(),
+    weather: {
+      location: env('WEATHER_LOCATION'),
+      units: oneOf('WEATHER_UNITS', ['celsius', 'fahrenheit'] as const, defaultTemperatureUnit()),
+    },
   };
 }

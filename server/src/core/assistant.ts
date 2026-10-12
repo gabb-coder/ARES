@@ -1,34 +1,50 @@
 import { randomUUID } from 'node:crypto';
 import type { AppConfig } from '../config.js';
 import { phrases } from '../persona.js';
-import type { Brain } from '../services/brain.js';
+import type { IntegrationManager } from '../integrations/manager.js';
+import type { AgentTool } from '../integrations/types.js';
+import type { Agent, PendingAction } from '../services/agent.js';
 import type { FsSandbox } from '../services/fsSandbox.js';
+import type { AppDirectory } from '../services/appDirectory.js';
 import type { Launcher } from '../services/launcher.js';
+import type { Scheduler } from '../services/scheduler.js';
+import type { SystemControl } from '../services/system.js';
 import { normalizeUtterance } from './intent.js';
 import type { HookRegistry } from './registry.js';
 import type { HookCard, HookContext, Logger } from './types.js';
 
 export const MAX_UTTERANCE_CHARS = 500;
+
+const CONFIRM_RE = /^(?:yes|yeah|yep|yup|confirm(?:ed)?|do it|go ahead|send it|proceed|approve(?:d)?|ok(?:ay)?|sure|affirmative)(?: please| thanks)?$/i;
+const CANCEL_RE = /^(?:no|nope|cancel|stop|don't|do not|never ?mind|abort|forget it|negative)(?: (?:it|that))?$/i;
 const HOOK_TIMEOUT_MS = 15_000;
 
 export interface CommandResponse {
   id: string;
   utterance: string;
-  /** Hook that handled the command, "brain" for the LLM fallback, or null. */
+  /** Hook that handled the command, "agent" for the LLM agent, or null. */
   intent: string | null;
   speech: string;
   card?: HookCard;
   ok: boolean;
   durationMs: number;
+  /** An agent action waiting for the user's confirmation. */
+  pending?: PendingAction;
 }
 
 export interface AssistantDeps {
   registry: HookRegistry;
-  brain: Brain | null;
+  agent: Agent | null;
+  integrations: IntegrationManager | null;
+  /** ARES's built-in agent tools (files, URLs, reminders). */
+  localTools: AgentTool[];
   config: AppConfig;
   log: Logger;
   fs: FsSandbox;
   launcher: Launcher;
+  system: SystemControl;
+  apps: AppDirectory;
+  scheduler: Scheduler;
 }
 
 /** Turns an utterance into a spoken reply: hooks first, then the optional LLM. */
@@ -47,6 +63,13 @@ export class Assistant {
 
     if (!input) return respond({ intent: null, speech: phrases.empty(), ok: true });
 
+    // A spoken yes/no answers an action the agent is holding for confirmation.
+    const pending = this.deps.agent?.pending();
+    if (pending && (CONFIRM_RE.test(input) || CANCEL_RE.test(input))) {
+      const reply = await this.deps.agent!.resolve(pending.id, CONFIRM_RE.test(input));
+      return respond({ intent: 'agent.confirm', speech: reply.speech, card: reply.card, ok: reply.ok, pending: reply.pending });
+    }
+
     const ctx = this.#context(utterance, input);
     const resolution = this.deps.registry.resolve(input, ctx);
 
@@ -62,22 +85,44 @@ export class Assistant {
       }
     }
 
-    if (this.deps.brain) {
+    const { agent } = this.deps;
+    if (agent) {
       try {
-        const speech = await this.deps.brain.ask(input);
-        return respond({ intent: 'brain', speech, ok: true });
+        const reply = await agent.ask(input, this.#toolsFor(input));
+        return respond({ intent: 'agent', speech: reply.speech, card: reply.card, ok: reply.ok, pending: reply.pending });
       } catch (err) {
-        this.deps.log.warn(`brain failed: ${(err as Error).message}`);
-        return respond({ intent: 'brain', speech: phrases.failure(friendlyError(err)), ok: false });
+        this.deps.log.warn(`agent failed: ${(err as Error).message}`);
+        return respond({ intent: 'agent', speech: phrases.failure(friendlyError(err)), ok: false });
       }
     }
 
     return respond({ intent: null, speech: phrases.unknown(), ok: false });
   }
 
+  /** Answers a pending confirmation from the dashboard's buttons. */
+  async resolvePending(id: string, approve: boolean): Promise<CommandResponse> {
+    const started = performance.now();
+    const reply = this.deps.agent
+      ? await this.deps.agent.resolve(id, approve).catch((err: Error) => ({ ok: false, speech: phrases.failure(friendlyError(err)) }))
+      : { ok: false, speech: 'Nothing is waiting for confirmation.' };
+    return {
+      id: randomUUID(),
+      utterance: approve ? 'Confirm' : 'Cancel',
+      intent: 'agent.confirm',
+      durationMs: Math.round(performance.now() - started),
+      ...reply,
+    };
+  }
+
+  #toolsFor(input: string): AgentTool[] {
+    const { localTools, integrations, config } = this.deps;
+    const remaining = config.brain.maxTools - localTools.length;
+    return [...localTools, ...(integrations?.tools(input, remaining) ?? [])];
+  }
+
   #context(utterance: string, input: string): HookContext {
-    const { registry, config, log, fs, launcher } = this.deps;
-    return { utterance, input, config, log, fs, launcher, hooks: () => registry.list() };
+    const { registry, config, log, fs, launcher, system, apps, scheduler } = this.deps;
+    return { utterance, input, config, log, fs, launcher, system, apps, scheduler, hooks: () => registry.list() };
   }
 }
 

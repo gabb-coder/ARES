@@ -1,5 +1,6 @@
 import express, { type ErrorRequestHandler, type Router } from 'express';
 import { MAX_UTTERANCE_CHARS } from '../core/assistant.js';
+import type { AresEvent } from '../core/events.js';
 import type { Runtime } from '../runtime.js';
 import { PERSONA } from '../persona.js';
 
@@ -19,7 +20,8 @@ export function apiRouter(rt: Runtime): Router {
       persona: PERSONA,
       tts: { provider: rt.tts.provider, available: rt.tts.available },
       stt: { local: rt.stt.available },
-      brain: rt.brain ? { provider: rt.brain.provider, model: rt.brain.model } : { provider: 'none' },
+      brain: rt.agent ? { provider: rt.agent.provider, model: rt.agent.model } : { provider: 'none' },
+      integrations: rt.integrations.configured,
       dryRun: rt.config.dryRun,
       hooks: rt.registry.size,
     });
@@ -27,6 +29,75 @@ export function apiRouter(rt: Runtime): Router {
 
   router.get('/hooks', (_req, res) => {
     res.json(rt.registry.list());
+  });
+
+  /** Server-sent events: alerts from timers/reminders and live state for the dashboard. */
+  router.get('/events', (req, res) => {
+    res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+    res.flushHeaders();
+    const send = (event: AresEvent) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+    send({ type: 'schedule', items: rt.scheduler.list() });
+    send({ type: 'integrations', servers: rt.integrations.status() });
+    const unsubscribe = rt.bus.subscribe(send);
+    const heartbeat = setInterval(() => res.write(': keep-alive\n\n'), 25_000);
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+  });
+
+  /** Confirm or cancel an action the agent is holding. Body: { approve: boolean }. */
+  router.post('/pending/:id', async (req, res) => {
+    const approve: unknown = req.body?.approve;
+    if (typeof approve !== 'boolean') {
+      res.status(400).json({ error: 'Body must be { "approve": boolean }' });
+      return;
+    }
+    res.json(await rt.assistant.resolvePending(req.params.id, approve));
+  });
+
+  router.get('/integrations', (_req, res) => {
+    res.json({ servers: rt.integrations.status(), error: rt.integrations.loadError });
+  });
+
+  router.post('/integrations/:name/reconnect', async (req, res) => {
+    try {
+      await rt.integrations.reconnect(req.params.name);
+      res.json({ servers: rt.integrations.status() });
+    } catch (err) {
+      res.status(404).json({ error: (err as Error).message });
+    }
+  });
+
+  /** OAuth providers send the browser back here after sign-in. */
+  router.get('/integrations/oauth/callback', async (req, res) => {
+    const { code, state, error } = req.query as Record<string, string | undefined>;
+    const page = (title: string, detail: string) =>
+      res
+        .type('html')
+        .send(
+          `<!doctype html><meta charset="utf-8"><title>ARES</title><body style="font:16px system-ui;background:#07080b;color:#e8ebf1;display:grid;place-items:center;height:100vh;margin:0"><div style="text-align:center"><h1 style="color:#ff5c69;letter-spacing:.3em;font-family:monospace">ARES</h1><p>${escapeHtml(title)}</p><p style="color:#8a93a6">${escapeHtml(detail)}</p></div>`,
+        );
+    if (error || !code || !state) {
+      res.status(400);
+      page('Sign-in was not completed.', error ?? 'Missing code.');
+      return;
+    }
+    try {
+      const name = await rt.integrations.completeOAuth(state, code);
+      page(`${name} connected.`, 'You can close this tab.');
+    } catch (err) {
+      res.status(400);
+      page('Sign-in failed.', (err as Error).message);
+    }
+  });
+
+  router.delete('/schedule/:id', (req, res) => {
+    if (!rt.scheduler.cancel(req.params.id)) {
+      res.status(404).json({ error: 'No such timer or reminder' });
+      return;
+    }
+    res.status(204).end();
   });
 
   router.post('/command', async (req, res) => {
@@ -73,4 +144,8 @@ export function apiRouter(rt: Runtime): Router {
   router.use(onError);
 
   return router;
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }

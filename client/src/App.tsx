@@ -4,7 +4,10 @@ import { CommandBar } from './components/CommandBar';
 import { Conversation } from './components/Conversation';
 import { Header } from './components/Header';
 import { CloseIcon } from './components/icons';
+import { Integrations } from './components/Integrations';
 import { MicButton } from './components/MicButton';
+import { PendingCard } from './components/PendingCard';
+import { ScheduleStrip } from './components/ScheduleStrip';
 import { SettingsPanel } from './components/SettingsPanel';
 import { useAssistant } from './hooks/useAssistant';
 import type { AssistantState } from './lib/assistant';
@@ -74,9 +77,13 @@ export default function App() {
               {status === 'listening' && state.interim ? state.interim : lastReply(state)}
             </p>
           </div>
+          {state.pending && (
+            <PendingCard pending={state.pending} busy={status === 'thinking'} onAnswer={(approve) => void controller.confirmPending(approve)} />
+          )}
           <div className="w-full max-w-xl">
             <CommandBar disabled={status === 'thinking'} onSubmit={(text) => void controller.submit(text)} />
           </div>
+          <ScheduleStrip items={state.schedule} onCancel={(id) => void controller.cancelScheduled(id)} />
         </section>
 
         {/* Second on small screens, a full-height side column on large ones. */}
@@ -84,7 +91,12 @@ export default function App() {
           <Conversation entries={state.entries} interim={state.interim} status={status} onClear={() => controller.clearHistory()} />
         </div>
 
-        <div className="min-w-0 lg:col-start-1 lg:row-start-2">
+        <div className="flex min-w-0 flex-col gap-6 lg:col-start-1 lg:row-start-2">
+          <Integrations
+            servers={state.integrations}
+            brain={state.server?.brain.provider}
+            onReconnect={(name) => void controller.reconnectIntegration(name)}
+          />
           <Capabilities hooks={state.hooks} disabled={status === 'thinking' || !state.online} onRun={(text) => void controller.submit(text)} />
         </div>
       </main>

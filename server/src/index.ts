@@ -21,7 +21,8 @@ async function main() {
     log.info(
       `tts ${rt.tts.provider}${rt.tts.provider !== 'browser' && !rt.tts.available ? ' (missing API key, browser fallback)' : ''}` +
         ` · stt ${rt.stt.available ? config.stt.url : 'browser'}` +
-        ` · brain ${rt.brain ? `${rt.brain.provider}/${rt.brain.model}` : 'off'}` +
+        ` · brain ${rt.agent ? `${rt.agent.provider}/${rt.agent.model}` : 'off'}` +
+        ` · integrations ${rt.integrations.configured}` +
         (config.dryRun ? ' · DRY RUN' : ''),
     );
   });
@@ -29,7 +30,8 @@ async function main() {
   const shutdown = () => {
     log.info('Shutting down.');
     wss.clients.forEach((c) => c.terminate());
-    server.close(() => process.exit(0));
+    server.closeAllConnections(); // SSE streams would otherwise hold close() open
+    void rt.close().finally(() => server.close(() => process.exit(0)));
     setTimeout(() => process.exit(0), 2000).unref();
   };
   process.on('SIGINT', shutdown);

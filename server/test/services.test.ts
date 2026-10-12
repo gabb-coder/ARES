@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { SERVER_ROOT } from '../src/config.js';
 import { loadPlugins } from '../src/core/loader.js';
+import { interpolate, loadIntegrations } from '../src/integrations/config.js';
 import { HookRegistry } from '../src/core/registry.js';
 import { defineHook } from '../src/core/types.js';
 import { systemPrompt, toSpeech } from '../src/persona.js';
@@ -78,5 +80,30 @@ describe('stt helpers', () => {
 
   it('drops whisper non-speech markers', () => {
     expect(cleanTranscript(' [BLANK_AUDIO] Open YouTube (keyboard clicking) ')).toBe('Open YouTube');
+  });
+});
+
+describe('integrations config', () => {
+  it('ships a valid example with every server disabled', async () => {
+    const { mcpServers } = await loadIntegrations(path.join(SERVER_ROOT, 'integrations.example.json'));
+    expect(Object.keys(mcpServers)).toEqual(['google', 'github', 'notion', 'slack', 'linear']);
+    expect(Object.values(mcpServers).every((s) => s.disabled)).toBe(true);
+  });
+
+  it('rejects ambiguous entries and treats a missing file as empty', async () => {
+    const dir = await tempDir('ares-int-');
+    const file = path.join(dir, 'integrations.json');
+    expect(await loadIntegrations(file)).toEqual({ mcpServers: {} });
+    await fs.writeFile(file, JSON.stringify({ mcpServers: { x: { command: 'a', url: 'http://b' } } }));
+    await expect(loadIntegrations(file)).rejects.toThrow(/can't have both/);
+    await fs.writeFile(file, JSON.stringify({ mcpServers: { 'bad name!': { command: 'a' } } }));
+    await expect(loadIntegrations(file)).rejects.toThrow(/must be letters/);
+  });
+
+  it('fills ${VARS} from the environment and reports missing ones', () => {
+    const missing = new Set<string>();
+    const out = interpolate({ headers: { Authorization: 'Bearer ${TOKEN}' }, args: ['${NOPE}'] }, { TOKEN: 'abc' }, missing);
+    expect(out).toEqual({ headers: { Authorization: 'Bearer abc' }, args: [''] });
+    expect([...missing]).toEqual(['NOPE']);
   });
 });

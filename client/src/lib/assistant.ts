@@ -1,5 +1,15 @@
 import { aresConfig } from '../config';
-import { api, type HookCard, type HookInfo, type ServerConfig } from './api';
+import {
+  api,
+  type AresEvent,
+  type CommandResponse,
+  type HookCard,
+  type HookInfo,
+  type IntegrationStatus,
+  type PendingAction,
+  type ScheduledItem,
+  type ServerConfig,
+} from './api';
 import { earcon } from './audio/earcon';
 import { Microphone } from './audio/microphone';
 import { LocalSttInput } from './speech/localStt';
@@ -36,11 +46,17 @@ export interface AssistantState {
   settings: Settings;
   voices: SpeechSynthesisVoice[];
   support: { webSpeech: boolean; synthesis: boolean };
+  /** An agent action waiting for yes/no. */
+  pending: PendingAction | null;
+  /** Running timers and upcoming reminders, soonest first. */
+  schedule: ScheduledItem[];
+  integrations: IntegrationStatus[];
 }
 
 const MAX_ENTRIES = 100;
 const MIC_IDLE_RELEASE_MS = 20_000;
 const HEALTH_INTERVAL_MS = 5_000;
+const FOLLOW_UP_LISTEN_MS = 8_000;
 
 /**
  * The dashboard's brain: a small state machine that owns the microphone,
@@ -79,6 +95,9 @@ export class AssistantController {
       settings: loadSettings(),
       voices: [],
       support: { webSpeech: isWebSpeechSupported(), synthesis: isSynthesisSupported() },
+      pending: null,
+      schedule: [],
+      integrations: [],
     };
   }
 
@@ -105,6 +124,7 @@ export class AssistantController {
 
     void this.#checkHealth();
     this.#healthTimer = setInterval(() => void this.#checkHealth(), HEALTH_INTERVAL_MS);
+    this.#disposers.push(api.events((event) => this.#onEvent(event)));
 
     // Browsers keep audio suspended until a user gesture; resume on the first one.
     const resumeAudio = () => {
@@ -174,11 +194,28 @@ export class AssistantController {
     if (!trimmed || this.#state.status === 'thinking') return;
     this.speaker.stop();
     this.#session?.abort();
-    await this.#handle(trimmed);
+    await this.#handle(trimmed, { viaVoice: false });
   }
 
   stopSpeaking() {
     this.speaker.stop();
+  }
+
+  /** Answers the agent's "Confirm?" from the dashboard buttons. */
+  async confirmPending(approve: boolean) {
+    const pending = this.#state.pending;
+    if (!pending || this.#state.status === 'thinking') return;
+    this.speaker.stop();
+    this.#session?.abort();
+    await this.#exchange(approve ? 'Confirm' : 'Cancel', () => api.resolvePending(pending.id, approve));
+  }
+
+  async cancelScheduled(id: string) {
+    await api.cancelScheduled(id).catch((err: Error) => this.#set({ error: err.message }));
+  }
+
+  async reconnectIntegration(name: string) {
+    await api.reconnectIntegration(name).catch((err: Error) => this.#set({ error: err.message }));
   }
 
   clearHistory() {
@@ -215,11 +252,11 @@ export class AssistantController {
 
   // --- core flow -------------------------------------------------------------
 
-  async #listenOnce() {
+  async #listenOnce(timeoutMs?: number) {
     try {
       await this.#ensureMic(this.#state.settings.sttEngine === 'local');
       earcon('listen');
-      const text = await this.#listen();
+      const text = await this.#listen(timeoutMs);
       if (text) await this.#handle(text);
     } catch (err) {
       this.#fail(err);
@@ -243,14 +280,19 @@ export class AssistantController {
   }
 
   /** Sends a command to the server and speaks the reply. */
-  async #handle(text: string) {
-    let release!: () => void;
-    this.#busy = new Promise((r) => (release = r));
-    this.#push({ role: 'user', text });
-    this.#set({ status: 'thinking', interim: '', awaitingCommand: false });
+  #handle(text: string, { viaVoice = true } = {}) {
+    return this.#exchange(text, () => api.command(text), viaVoice);
+  }
 
+  async #exchange(userText: string, send: () => Promise<CommandResponse>, viaVoice = false) {
+    const release = this.#claim();
+    this.#push({ role: 'user', text: userText });
+    this.#set({ status: 'thinking', interim: '', awaitingCommand: false, pending: null });
+
+    let pending: PendingAction | null = null;
     try {
-      const res = await api.command(text);
+      const res = await send();
+      pending = res.pending ?? null;
       this.#push({
         role: 'ares',
         text: res.speech,
@@ -259,6 +301,12 @@ export class AssistantController {
         ok: res.ok,
         durationMs: res.durationMs,
       });
+      this.#set({ pending });
+      // ARES asked "Confirm?": take the next words as the answer, no wake word needed.
+      if (pending && this.#state.settings.wakeWord) {
+        this.#forceCommand = true;
+        this.#set({ awaitingCommand: true });
+      }
       await this.#say(res.speech);
     } catch (err) {
       const message = (err as Error).message;
@@ -267,7 +315,48 @@ export class AssistantController {
       earcon('error');
     } finally {
       this.#set({ status: 'idle' });
-      this.#busy = null;
+      release();
+    }
+
+    // Spoken push-to-talk command: listen once for the yes/no without another tap.
+    // (Deferred so the caller's own cleanup runs first.)
+    if (pending && viaVoice && !this.#state.settings.wakeWord) {
+      setTimeout(() => void this.#listenOnce(FOLLOW_UP_LISTEN_MS), 0);
+    }
+  }
+
+  /** Marks ARES busy so hands-free listening pauses; returns the release. */
+  #claim(): () => void {
+    let release!: () => void;
+    const busy = new Promise<void>((r) => (release = r));
+    this.#busy = busy;
+    return () => {
+      if (this.#busy === busy) this.#busy = null;
+      release();
+    };
+  }
+
+  #onEvent(event: AresEvent) {
+    if (event.type === 'schedule') this.#set({ schedule: event.items });
+    else if (event.type === 'integrations') this.#set({ integrations: event.servers });
+    else if (event.type === 'alert') void this.#announce(event);
+  }
+
+  /** Timer and reminder alerts: chime now, speak once ARES is free. */
+  async #announce(event: Extract<AresEvent, { type: 'alert' }>) {
+    this.#push({ role: 'ares', text: event.speech, intent: event.kind, card: event.card, ok: true });
+    earcon('alert');
+    while (this.#busy) await this.#busy;
+    // Don't talk over someone mid-sentence in push-to-talk mode.
+    for (let waited = 0; this.#state.status === 'listening' && !this.#state.settings.wakeWord && waited < 15_000; waited += 250) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    const release = this.#claim();
+    if (this.#state.settings.wakeWord) this.#session?.abort();
+    try {
+      await new Promise((r) => setTimeout(r, 900)); // let the chime finish
+      await this.#say(event.speech);
+    } finally {
       release();
     }
   }
