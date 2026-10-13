@@ -55,7 +55,7 @@ ARES uses [Ollama](https://ollama.com) to run a language model on your Mac. It a
    ```bash
    ollama pull qwen3:8b
    ```
-   On a Mac with 8 GB of memory, use `qwen3:4b` instead. With 32 GB or more, `qwen3:14b` is smarter.
+   On a Mac with 8 GB of memory, use `qwen3:4b` instead (2.5 GB) and also set `OLLAMA_NUM_CTX=8192` in step 3 to leave memory for everything else. With 32 GB or more, `qwen3:14b` is smarter. Ollama needs macOS 14 (Sonoma) or newer, and is much faster on Apple-chip Macs than on Intel ones.
 3. **Point ARES at it.** Create `server/.env` from the template and turn the AI on:
    ```bash
    cp server/.env.example server/.env
