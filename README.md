@@ -205,6 +205,7 @@ Copy [`server/.env.example`](server/.env.example) to `server/.env`. Every settin
 | `WEATHER_LOCATION` / `WEATHER_UNITS` | (unset) / by region | Default city (or `lat,lon`) and `celsius` or `fahrenheit` |
 | `ARES_BRAIN` | `none` | `none`, `ollama` or `anthropic` |
 | `OLLAMA_MODEL` / `OLLAMA_THINK` | `qwen3:8b` / model default | Local model, and whether it "thinks" first |
+| `OLLAMA_NUM_CTX` / `OLLAMA_TIMEOUT` | `16384` / `180` | Model context window (use `8192` on 8 GB Macs) and seconds to wait for an answer |
 | `ARES_AGENT_MAX_TOOLS` | `40` | Most tools offered to the model per request |
 | `ARES_INTEGRATIONS` | `integrations.json` | MCP integrations file (relative to `server/`) |
 | `TTS_PROVIDER` | `browser` | `browser`, `elevenlabs` or `fishaudio` |
@@ -257,7 +258,9 @@ ARES/
 
 - **`npm error enoent Could not read package.json`.** Run commands inside the `ARES` folder (`cd ARES`), not your home folder.
 - **"Microphone access was blocked."** Allow the microphone from the address bar's site settings.
-- **"Ollama isn't reachable."** Start the Ollama app (llama icon in the menu bar) or run `ollama serve`.
+- **Still seeing the old version after updating.** The Hooks panel should list about 45 commands, including Timers and Weather. If it doesn't, `git pull` probably stopped because `npm install` changed `package-lock.json`. Run `git stash`, then `git pull`, `npm install` and `npm run dev` again. Your `server/.env` isn't affected.
+- **"Ollama isn't running."** Start the Ollama app (llama icon in the menu bar) or run `ollama serve`. When ARES starts, its log says whether the model is ready (`ai: qwen3:4b loaded and ready`) or what's missing.
+- **"The model took too long to answer."** Ollama is running but the model is slow, which is common on 8 GB Macs. Set `OLLAMA_THINK=false` and `OLLAMA_NUM_CTX=8192`, close other apps, or use a smaller model (`qwen3:1.7b`). `OLLAMA_TIMEOUT` sets how long ARES waits.
 - **"Model … isn't installed."** Run `ollama pull qwen3:8b`, or whichever model `OLLAMA_MODEL` names.
 - **An integration shows an error.** Hover over it to read the reason. Common ones are a missing secret ("Set NOTION_TOKEN in server/.env") or a missing tool (`uvx` needs `brew install uv`). Click retry after fixing it.
 - **The AI ignores an app.** Small models handle a few tools better than many. Add `keywords` to that app in `integrations.json`, or use `includeTools` to trim its tool list.

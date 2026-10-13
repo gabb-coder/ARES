@@ -52,7 +52,7 @@ const ollamaSays = (content: string, toolCalls?: Array<{ name: string; arguments
 
 async function ollamaRuntime(url: string, extra: Parameters<typeof testRuntime>[0] = {}) {
   const base = testConfig().brain;
-  const ctx = await testRuntime({ brain: { ...base, provider: 'ollama', ollama: { url, model: 'qwen3', think: false } }, ...extra });
+  const ctx = await testRuntime({ brain: { ...base, provider: 'ollama', ollama: { url, model: 'qwen3', think: false, timeoutMs: 10_000 } }, ...extra });
   runtimes.push(ctx.rt);
   return ctx;
 }
@@ -98,10 +98,51 @@ describe('agent: conversation', () => {
     expect(res.card).toMatchObject({ title: 'Full reply', link: 'https://accounts.google.com/o/oauth2/auth?x=1' });
   });
 
-  it('reports an unreachable model briefly', async () => {
+  it('says when Ollama is not running', async () => {
     const { rt } = await ollamaRuntime('http://127.0.0.1:9');
     const res = await rt.assistant.handle('tell me a story');
-    expect(res).toMatchObject({ intent: 'agent', ok: false, speech: "That failed. Ollama isn't reachable at http://127.0.0.1:9." });
+    expect(res).toMatchObject({ intent: 'agent', ok: false, speech: "That failed. Ollama isn't running. Open the Ollama app." });
+  });
+
+  it('tells a slow model apart from a missing one', async () => {
+    // Accepts the request but never answers.
+    const silent = http.createServer(() => {});
+    servers.push(silent);
+    await new Promise<void>((r) => silent.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${(silent.address() as AddressInfo).port}`;
+    const base = testConfig().brain;
+    const ctx = await testRuntime({ brain: { ...base, provider: 'ollama', ollama: { url, model: 'qwen3:4b', think: false, timeoutMs: 300 } } });
+    runtimes.push(ctx.rt);
+    const res = await ctx.rt.assistant.handle('tell me a story');
+    expect(res.speech).toBe('That failed. The model took too long to answer. Try a smaller model, or raise OLLAMA_TIMEOUT.');
+    silent.closeAllConnections();
+  });
+
+  it('checks the model at startup and preloads it', async () => {
+    const requests: Array<{ url: string; body: string }> = [];
+    const ollama = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        requests.push({ url: req.url ?? '', body });
+        res.setHeader('Content-Type', 'application/json');
+        res.end(req.url === '/api/tags' ? JSON.stringify({ models: [{ name: 'qwen3:4b' }, { name: 'llama3.2:latest' }] }) : '{}');
+      });
+    });
+    servers.push(ollama);
+    await new Promise<void>((r) => ollama.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${(ollama.address() as AddressInfo).port}`;
+    const make = async (model: string) => {
+      const ctx = await testRuntime({ brain: { ...testConfig().brain, provider: 'ollama', ollama: { url, model, think: false, timeoutMs: 5000 } } });
+      runtimes.push(ctx.rt);
+      return ctx.rt.agent!;
+    };
+
+    expect(await (await make('qwen3:4b')).prepare()).toEqual({ ok: true, message: 'qwen3:4b loaded and ready' });
+    expect(JSON.parse(requests.at(-1)!.body)).toEqual({ model: 'qwen3:4b', messages: [], stream: false });
+    expect(await (await make('llama3.2')).prepare()).toMatchObject({ ok: true });
+    expect(await (await make('qwen3:8b')).prepare()).toEqual({ ok: false, message: "Model qwen3:8b isn't installed. Run: ollama pull qwen3:8b" });
+    expect(await (await ollamaRuntime('http://127.0.0.1:9')).rt.agent!.prepare()).toMatchObject({ ok: false, message: expect.stringMatching(/Open the Ollama app/) });
   });
 });
 
@@ -151,7 +192,7 @@ describe('agent: local tools', () => {
 describe('agent: MCP integrations', () => {
   async function trackerRuntime(script: Array<(body: Record<string, unknown>) => unknown>, extra: Record<string, unknown> = {}) {
     const model = await fakeModel(script);
-    const ctx = await testRuntime({ brain: { ...testConfig().brain, provider: 'ollama', ollama: { url: model.url, model: 'qwen3', think: null } } });
+    const ctx = await testRuntime({ brain: { ...testConfig().brain, provider: 'ollama', ollama: { url: model.url, model: 'qwen3', think: null, timeoutMs: 10_000 } } });
     runtimes.push(ctx.rt);
     // Point the runtime at a tracker integration and connect it.
     const file = path.join(ctx.dataDir, 'integrations.json');

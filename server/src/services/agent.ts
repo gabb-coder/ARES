@@ -58,6 +58,13 @@ interface Adapter<M> {
   start(history: readonly Turn[], userText: string): M[];
   step(messages: M[], tools: AgentTool[]): Promise<Step<M>>;
   results(items: Array<{ call: ToolCall; output: ToolOutput }>): M[];
+  /** Startup check: is the model reachable and ready? Optional. */
+  prepare?(): Promise<Readiness>;
+}
+
+export interface Readiness {
+  ok: boolean;
+  message: string;
 }
 
 interface Task<M> {
@@ -88,6 +95,11 @@ export class Agent {
 
   get model() {
     return this.adapter.model;
+  }
+
+  /** Checks the model is reachable and installed, and loads it so the first answer is quick. */
+  prepare(): Promise<Readiness> {
+    return this.adapter.prepare?.() ?? Promise.resolve({ ok: true, message: `${this.provider}/${this.model}` });
   }
 
   /** The action waiting for the user's yes/no, if it hasn't expired. */
@@ -227,8 +239,8 @@ export function createAgent(config: AppConfig, hooks: HookInfo[], log: Logger): 
   const { brain } = config;
   const system = systemPrompt(hooks);
   if (brain.provider === 'ollama') {
-    const { url, model, think } = brain.ollama;
-    return new Agent(new OllamaAdapter(url, model, think, brain.ollamaContext, system, log), brain.historyTurns, log);
+    const { url, model, think, timeoutMs } = brain.ollama;
+    return new Agent(new OllamaAdapter(url, model, think, timeoutMs, brain.ollamaContext, system, log), brain.historyTurns, log);
   }
   if (brain.provider === 'anthropic') return new Agent(new AnthropicAdapter(brain.anthropic.model, system), brain.historyTurns, log);
   return null;
@@ -252,6 +264,7 @@ class OllamaAdapter implements Adapter<OllamaMessage> {
     private readonly url: string,
     readonly model: string,
     private readonly think: boolean | null,
+    private readonly timeoutMs: number,
     private readonly contextWindow: number,
     private readonly system: string,
     private readonly log: Logger,
@@ -304,26 +317,56 @@ class OllamaAdapter implements Adapter<OllamaMessage> {
     }));
   }
 
-  async #chat(messages: OllamaMessage[], tools: AgentTool[]) {
+  async prepare(): Promise<Readiness> {
+    let installed: string[];
+    try {
+      const res = await fetch(`${this.url}/api/tags`, { signal: AbortSignal.timeout(5000) });
+      installed = ((await res.json()) as { models?: Array<{ name: string }> }).models?.map((m) => m.name) ?? [];
+    } catch {
+      return { ok: false, message: `Ollama isn't reachable at ${this.url}. Open the Ollama app.` };
+    }
+    const wanted = this.model.includes(':') ? this.model : `${this.model}:latest`;
+    if (!installed.includes(wanted)) {
+      return { ok: false, message: `Model ${this.model} isn't installed. Run: ollama pull ${this.model}` };
+    }
+    // An empty chat loads the model into memory without generating anything.
+    try {
+      await this.#post({ model: this.model, messages: [], stream: false });
+    } catch (err) {
+      return { ok: false, message: `${this.model} failed to load: ${(err as Error).message}` };
+    }
+    return { ok: true, message: `${this.model} loaded and ready` };
+  }
+
+  #chat(messages: OllamaMessage[], tools: AgentTool[]) {
+    return this.#post({
+      model: this.model,
+      messages,
+      stream: false,
+      options: { num_ctx: this.contextWindow },
+      ...(this.think === null ? {} : { think: this.think }),
+      ...(tools.length
+        ? { tools: tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.inputSchema } })) }
+        : {}),
+    });
+  }
+
+  async #post(body: Record<string, unknown>): Promise<{ message?: OllamaMessage }> {
     let res: Response;
     try {
       res = await fetch(`${this.url}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: this.model,
-          messages,
-          stream: false,
-          options: { num_ctx: this.contextWindow },
-          ...(this.think === null ? {} : { think: this.think }),
-          ...(tools.length
-            ? { tools: tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.inputSchema } })) }
-            : {}),
-        }),
-        signal: AbortSignal.timeout(120_000),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
-    } catch {
-      throw new Error(`Ollama isn't reachable at ${this.url}`);
+    } catch (err) {
+      // A timeout means Ollama is up but the model is slow; don't call it unreachable.
+      if ((err as Error).name === 'TimeoutError') {
+        throw new Error('The model took too long to answer. Try a smaller model, or raise OLLAMA_TIMEOUT');
+      }
+      this.log.warn(`ollama: no response from ${this.url}`);
+      throw new Error("Ollama isn't running. Open the Ollama app");
     }
     if (!res.ok) {
       const detail = await res.text().catch(() => '');

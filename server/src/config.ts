@@ -42,7 +42,7 @@ export interface AppConfig {
   };
   brain: {
     provider: BrainProvider;
-    ollama: { url: string; model: string; think: boolean | null };
+    ollama: { url: string; model: string; think: boolean | null; timeoutMs: number };
     anthropic: { model: string };
     historyTurns: number;
     /** Upper bound on tools offered to the model per request. */
@@ -178,6 +178,8 @@ export function loadConfig(): AppConfig {
         model: env('OLLAMA_MODEL', 'qwen3:8b'),
         // Unset: the model's default. "false" skips reasoning for faster spoken replies.
         think: env('OLLAMA_THINK') ? env('OLLAMA_THINK').toLowerCase() === 'true' : null,
+        // Generous: small Macs can take a while, especially loading the model.
+        timeoutMs: Number(env('OLLAMA_TIMEOUT', '180')) * 1000,
       },
       anthropic: { model: env('ANTHROPIC_MODEL', 'claude-opus-5-5') },
       historyTurns: Number(env('ARES_BRAIN_HISTORY', '6')),

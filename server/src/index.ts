@@ -27,6 +27,11 @@ async function main() {
     );
   });
 
+  // Check the AI model in the background and load it, so the first question is fast.
+  if (rt.agent) {
+    void rt.agent.prepare().then((r) => (r.ok ? log.info(`ai: ${r.message}`) : log.warn(`ai: ${r.message}`)));
+  }
+
   const shutdown = () => {
     log.info('Shutting down.');
     wss.clients.forEach((c) => c.terminate());
