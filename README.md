@@ -73,24 +73,27 @@ Built-in commands still run instantly; the model only handles what they don't. `
 
 ARES connects to apps through [MCP](https://modelcontextprotocol.io) (Model Context Protocol), the open standard AI assistants use for tool integrations. Thousands of MCP servers exist, so if an app has one, ARES can use it.
 
-1. Copy the example, which has Google Workspace, GitHub, Notion, Slack and Linear set up but switched off:
+1. Copy the example, which has Zapier, Notion, Linear, GitHub, Slack and Google Workspace set up but switched off:
    ```bash
    cp server/integrations.example.json server/integrations.json
    ```
-2. For each app you want, set `"disabled": false` and add its secret to `server/.env`. The config refers to secrets as `${NAME}`.
+2. For each app you want, set `"disabled": false` and add its secret (if it needs one) to `server/.env`. The config refers to secrets as `${NAME}`.
 3. Restart ARES. The **Integrations** panel on the dashboard shows each app's status. The AI model must be on (see above).
 
-| App | How it connects | What you need |
-|---|---|---|
-| **Gmail, Calendar, Drive, Docs** | [`workspace-mcp`](https://pypi.org/project/workspace-mcp/) (runs with `uvx`; install [uv](https://docs.astral.sh/uv/) via `brew install uv`) | A Google Cloud OAuth client: `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`. The first request asks you to sign in with Google; the link appears in the log. |
-| **GitHub** | GitHub's hosted MCP server | A [personal access token](https://github.com/settings/tokens) as `GITHUB_TOKEN` |
-| **Notion** | [`@notionhq/notion-mcp-server`](https://github.com/makenotion/notion-mcp-server) | An [integration token](https://www.notion.so/profile/integrations) as `NOTION_TOKEN`, with your pages shared to it |
-| **Slack** | [`slack-mcp-server`](https://github.com/korotovsky/slack-mcp-server) | A user token as `SLACK_MCP_XOXP_TOKEN`. Posting is off unless you also set `SLACK_MCP_ADD_MESSAGE_TOOL`. |
-| **Linear** | Linear's hosted MCP server | Nothing. Click **Sign in** in the Integrations panel. |
+| App | How it connects | What you need | Effort |
+|---|---|---|---|
+| **Gmail, Google Calendar, Slack, Sheets and 9,000+ more** | [Zapier MCP](https://zapier.com/mcp) | A free Zapier account. At [mcp.zapier.com](https://mcp.zapier.com), add an MCP server → choose **Other** → **Connect** → **Generate token**, and save it as `ZAPIER_MCP_TOKEN`. Apps connected to your Zapier account appear as tools. Each action uses 2 Zapier tasks from your plan's monthly allowance. | Easy |
+| **Notion** | Notion's hosted MCP server | Nothing. Click **Sign in** in the Integrations panel and choose your workspace. | Easy |
+| **Linear** | Linear's hosted MCP server | Nothing. Click **Sign in** in the Integrations panel. | Easy |
+| **GitHub** | GitHub's hosted MCP server | A [personal access token](https://github.com/settings/personal-access-tokens) as `GITHUB_TOKEN` | Easy |
+| **Slack** (direct) | [`slack-mcp-server`](https://github.com/korotovsky/slack-mcp-server) | A Slack app with a user token (`xoxp-…`) as `SLACK_MCP_XOXP_TOKEN`; see its [setup guide](https://github.com/korotovsky/slack-mcp-server/blob/master/docs/01-authentication-setup.md). Posting is off unless you also set `SLACK_MCP_ADD_MESSAGE_TOOL`. | Medium |
+| **Google Workspace** (direct) | [`workspace-mcp`](https://workspacemcp.com) (runs with `uvx`; `brew install uv`) | A Google Cloud project with the Gmail/Calendar APIs enabled and a **Desktop app** OAuth client: `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`. The first request asks you to sign in with Google. | Advanced |
+
+Zapier is the quickest way to reach Gmail and Calendar. The direct Google and Slack servers avoid a third party but take longer to set up.
 
 Any other MCP server works the same way: paste its config (the same `mcpServers` format Claude Desktop uses) into `integrations.json`. A server can be a local command (`command`, `args`, `env`) or a remote URL (`url`, optional `headers`). Remote servers without an `Authorization` header sign in with OAuth: ARES shows a **Sign in** button, you approve in the browser, and the token is saved in `~/.ares/oauth/` (readable only by you).
 
-**ARES confirms before it acts.** Tools that only read (searching email, listing events, reading pages) run immediately. Anything that sends, creates, changes or deletes something pauses first. ARES says what it's about to do ("Ready to send email to Sam… Confirm?") and shows the details on screen. Say *"yes"* or *"cancel"*, or use the buttons. Unanswered requests expire after 3 minutes. Tools count as read-only when the server marks them that way, or when they are unmarked and named like `get_…`, `list_…` or `search_…`.
+**ARES confirms before it acts.** Tools that only read (searching email, listing events, reading pages) run immediately. Anything that sends, creates, changes or deletes something pauses first. ARES says what it's about to do ("Ready to send email to Sam… Confirm?") and shows the details on screen. Say *"yes"* or *"cancel"*, or use the buttons. Unanswered requests expire after 3 minutes. Tools count as read-only when the server marks them that way, or when they are unmarked and their name contains a lookup word (`get`, `list`, `search`, `find`, …) and no action word (`send`, `create`, `delete`, `update`, …).
 
 Optional per-app keys in `integrations.json`:
 
@@ -262,7 +265,7 @@ ARES/
 - **"Ollama isn't running."** Start the Ollama app (llama icon in the menu bar) or run `ollama serve`. When ARES starts, its log says whether the model is ready (`ai: qwen3:4b loaded and ready`) or what's missing.
 - **"The model took too long to answer."** Ollama is running but the model is slow, which is common on 8 GB Macs. Set `OLLAMA_THINK=false` and `OLLAMA_NUM_CTX=8192`, close other apps, or use a smaller model (`qwen3:1.7b`). `OLLAMA_TIMEOUT` sets how long ARES waits.
 - **"Model … isn't installed."** Run `ollama pull qwen3:8b`, or whichever model `OLLAMA_MODEL` names.
-- **An integration shows an error.** Hover over it to read the reason. Common ones are a missing secret ("Set NOTION_TOKEN in server/.env") or a missing tool (`uvx` needs `brew install uv`). Click retry after fixing it.
+- **An integration shows an error.** Hover over it to read the reason. Common ones are a missing secret ("Set GITHUB_TOKEN in server/.env") or a missing tool (`uvx` needs `brew install uv`). Click retry after fixing it.
 - **The AI ignores an app.** Small models handle a few tools better than many. Add `keywords` to that app in `integrations.json`, or use `includeTools` to trim its tool list.
 - **Music, lock or screenshots don't work on macOS.** Grant the permissions listed above, then try again.
 - **"The browser's speech service is unreachable."** Chrome's recognition needs internet access. Switch to Local Whisper to work offline.

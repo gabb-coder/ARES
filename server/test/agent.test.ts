@@ -342,4 +342,15 @@ describe('needsConfirmation', () => {
     expect(needsConfirmation(tool('send_email'), ['send_email'])).toBe(false);
     expect(needsConfirmation(tool('delete_repo'), true)).toBe(false);
   });
+
+  it('reads prefixed, Zapier-style names by their verbs', () => {
+    expect(needsConfirmation(tool('gmail_find_email'), undefined)).toBe(false);
+    expect(needsConfirmation(tool('google_calendar_find_events'), undefined)).toBe(false);
+    expect(needsConfirmation(tool('slack_send_channel_message'), undefined)).toBe(true);
+    expect(needsConfirmation(tool('gmail_create_draft'), undefined)).toBe(true);
+    expect(needsConfirmation(tool('discover_zapier_actions'), undefined)).toBe(false);
+    expect(needsConfirmation(tool('enable_zapier_action'), undefined)).toBe(true);
+    expect(needsConfirmation(tool('get_and_close_all'), undefined)).toBe(true);
+    expect(needsConfirmation(tool('do_something'), undefined)).toBe(true);
+  });
 });

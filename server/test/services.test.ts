@@ -86,7 +86,7 @@ describe('stt helpers', () => {
 describe('integrations config', () => {
   it('ships a valid example with every server disabled', async () => {
     const { mcpServers } = await loadIntegrations(path.join(SERVER_ROOT, 'integrations.example.json'));
-    expect(Object.keys(mcpServers)).toEqual(['google', 'github', 'notion', 'slack', 'linear']);
+    expect(Object.keys(mcpServers)).toEqual(['zapier', 'notion', 'linear', 'github', 'slack', 'google']);
     expect(Object.values(mcpServers).every((s) => s.disabled)).toBe(true);
   });
 

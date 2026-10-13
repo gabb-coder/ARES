@@ -1,26 +1,25 @@
 {
   "mcpServers": {
-    "google": {
-      "command": "uvx",
-      "args": ["workspace-mcp", "--tool-tier", "core", "--tools", "gmail", "calendar", "drive", "docs"],
-      "env": {
-        "GOOGLE_OAUTH_CLIENT_ID": "${GOOGLE_OAUTH_CLIENT_ID}",
-        "GOOGLE_OAUTH_CLIENT_SECRET": "${GOOGLE_OAUTH_CLIENT_SECRET}"
-      },
-      "keywords": ["email", "emails", "gmail", "inbox", "mail", "calendar", "meeting", "event", "schedule", "drive", "doc", "docs", "google"],
+    "zapier": {
+      "url": "https://mcp.zapier.com/api/v1/connect",
+      "headers": { "Authorization": "Bearer ${ZAPIER_MCP_TOKEN}" },
+      "keywords": ["email", "gmail", "inbox", "mail", "reply", "calendar", "meeting", "event", "schedule", "slack", "sheet", "spreadsheet", "drive", "zapier"],
+      "disabled": true
+    },
+    "notion": {
+      "url": "https://mcp.notion.com/mcp",
+      "keywords": ["notion", "page", "wiki", "notes", "doc"],
+      "disabled": true
+    },
+    "linear": {
+      "url": "https://mcp.linear.app/mcp",
+      "keywords": ["linear", "ticket", "issue", "bug", "project"],
       "disabled": true
     },
     "github": {
       "url": "https://api.githubcopilot.com/mcp/",
       "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" },
       "keywords": ["github", "repo", "repository", "issue", "pull request", "pr"],
-      "disabled": true
-    },
-    "notion": {
-      "command": "npx",
-      "args": ["-y", "@notionhq/notion-mcp-server@2.5.2"],
-      "env": { "NOTION_TOKEN": "${NOTION_TOKEN}" },
-      "keywords": ["notion", "page", "wiki", "notes"],
       "disabled": true
     },
     "slack": {
@@ -30,9 +29,14 @@
       "keywords": ["slack", "channel", "dm", "message", "messages", "thread"],
       "disabled": true
     },
-    "linear": {
-      "url": "https://mcp.linear.app/mcp",
-      "keywords": ["linear", "ticket", "issue", "bug", "project"],
+    "google": {
+      "command": "uvx",
+      "args": ["workspace-mcp", "--tool-tier", "core", "--tools", "gmail", "calendar", "drive", "docs"],
+      "env": {
+        "GOOGLE_OAUTH_CLIENT_ID": "${GOOGLE_OAUTH_CLIENT_ID}",
+        "GOOGLE_OAUTH_CLIENT_SECRET": "${GOOGLE_OAUTH_CLIENT_SECRET}"
+      },
+      "keywords": ["email", "emails", "gmail", "inbox", "mail", "calendar", "meeting", "event", "schedule", "drive", "doc", "docs", "google"],
       "disabled": true
     }
   }

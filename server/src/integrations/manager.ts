@@ -13,8 +13,15 @@ const CONNECT_TIMEOUT_MS = 60_000; // first `npx -y` run downloads the server
 const CALL_TIMEOUT_MS = 60_000;
 const MAX_RESULT_CHARS = 12_000;
 
-/** Unannotated tools named like these are treated as read-only (no confirmation). */
-const READ_ONLY_NAME = /^(?:get|list|search|read|fetch|find|query|describe|view|lookup|retrieve|show|count|check)[_-]/i;
+/**
+ * For tools without annotations, the name decides: any action verb means
+ * "ask first"; otherwise a lookup verb means read-only. Matching whole name
+ * segments handles prefixed names like "gmail_find_email" (Zapier-style).
+ */
+const ACTION_VERBS = new Set(
+  'send create delete remove update edit post add archive move reply draft write set invite cancel close merge upload share publish approve assign trash modify rename patch put insert schedule book run execute trigger enable disable start stop transfer pay purchase'.split(' '),
+);
+const LOOKUP_VERBS = new Set('get list search read fetch find query describe view lookup retrieve show count check discover'.split(' '));
 
 export interface IntegrationOptions {
   file: string;
@@ -267,7 +274,9 @@ export function needsConfirmation(tool: Tool, autoApprove: ServerConfig['autoApp
   const hints = tool.annotations;
   if (hints?.destructiveHint === true) return true;
   if (hints?.readOnlyHint !== undefined) return !hints.readOnlyHint;
-  return !READ_ONLY_NAME.test(tool.name);
+  const words = tool.name.toLowerCase().split(/[^a-z0-9]+/);
+  if (words.some((w) => ACTION_VERBS.has(w))) return true;
+  return !words.some((w) => LOOKUP_VERBS.has(w));
 }
 
 /** Flattens MCP content blocks into text for the model, capped in size. */
